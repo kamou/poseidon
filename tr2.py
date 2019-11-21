@@ -68,6 +68,6 @@ class R2(object):
 
     def run(self, until=None):
         if until:
-            print self.r2.cmd("dcu {:#x}".format(self.address(until)))
+            print (self.r2.cmd("dcu {:#x}".format(self.address(until))))
         else:
-            print self.r2.cmd("dc")
+            print (self.r2.cmd("dc"))

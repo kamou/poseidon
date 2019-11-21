@@ -221,7 +221,7 @@ def syscall_read(tp):
     tp.update_area(buf, data[:sz])
     printable_syms = list()
     astCtxt = tp.arch.tc.getAstContext()
-    for i in xrange(sz):
+    for i in range(sz):
         sym =tp.symbolize(buf +i)
         printable_syms.append(astCtxt.bvugt(astCtxt.variable(sym), astCtxt.bv(0x20,  triton.CPUSIZE.BYTE_BIT)))
         printable_syms.append(astCtxt.bvult(astCtxt.variable(sym), astCtxt.bv(0x7f, triton.CPUSIZE.BYTE_BIT)))

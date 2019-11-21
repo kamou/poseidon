@@ -36,7 +36,7 @@ class TritonOsLinux(TritonOs):
         #         var = s["vaddr"]
         #         break
 
-        # for i in xrange(0x80):
+        # for i in range(0x80):
         #     context.symbolize(var + 0x70 + i)
 
         for imp in r2.imports():
@@ -88,7 +88,7 @@ class TritonOsLinux(TritonOs):
             inst.setOpcode(context.get_area(pc, 16))
             inst.setAddress(pc)
             context.arch.tc.disassembly(inst)
-            print inst
+            print (inst)
 
             context.cur_inst = inst
             if pc in context.hooks:

@@ -1,4 +1,5 @@
 import triton
+from texceptions import *
 
 
 def constantFolding(Triton, node):
@@ -7,12 +8,15 @@ def constantFolding(Triton, node):
     return Triton.getAstContext().bv(node.evaluate(), node.getBitvectorSize())
 
 class ArchCommon(object):
-    def symbolize(self, addr):
-        return self.tc.convertMemoryToSymbolicVariable(triton.MemoryAccess(addr, triton.CPUSIZE.BYTE))
+    def symbolize(self, addr, size):
+        return self.tc.symbolizeMemory(triton.MemoryAccess(addr, size))
 
-    def getRegister(self, name):
-        reg = getattr(self.tc.registers, name)
-        return reg
+
+    def read_reg(self, reg):
+        return self.tc.getConcreteRegisterValue(reg)
+
+    def write_reg(self, reg, value):
+        return self.tc.setConcreteRegisterValue(reg, value)
 
     def set_memory_feed(self, g, s=None):
         self.tc.addCallback(g, triton.CALLBACK.GET_CONCRETE_MEMORY_VALUE)
@@ -31,11 +35,17 @@ class ArchCommon(object):
     def get_area(self, address, size):
         return self.tc.getConcreteMemoryAreaValue(address, size)
 
+    def get_memory_value(self, addr, size):
+        return self.tc.getConcreteMemoryValue(triton.MemoryAccess(addr, size))
+
+    def set_memory_value(self, addr, value, size):
+        return self.tc.setConcreteMemoryValue(triton.MemoryAccess(addr, size), value)
+
     def disassemble(self, addr=None):
         if not addr is None:
             pc = addr
         else:
-            pc = self.tc.getRegisterAst(self.pc).evaluate()
+            pc = self.read_reg(self.pc)
 
         inst = triton.Instruction()
         inst_code = self.get_area(pc, 16)
@@ -48,13 +58,14 @@ class ArchCommon(object):
         if not addr is None:
             pc = addr
         else:
-            pc = self.tc.getRegisterAst(self.pc).evaluate()
+            pc = self.read_reg(self.pc)
 
         inst = triton.Instruction()
         inst_code = self.get_area(pc, 16)
         inst.setOpcode(inst_code)
         inst.setAddress(pc)
-        self.tc.processing(inst)
+        if not self.tc.processing(inst):
+            raise UnmanagedInstruction(inst)
         return inst
 
 class ArchX86(ArchCommon):
@@ -68,7 +79,7 @@ class ArchX86(ArchCommon):
         self.sp = self.tc.registers.esp
         self.psize = triton.CPUSIZE.DWORD
         self.ret = self.tc.registers.eax
-        # self.context.setAstRepresentationMode(triton.AST_REPRESENTATION.PYTHON)
+        self.tc.setAstRepresentationMode(triton.AST_REPRESENTATION.PYTHON)
 
     def get_func_arg(self, n):
         offset = n*self.psize + self.psize
@@ -76,25 +87,22 @@ class ArchX86(ArchCommon):
         return value
 
     def set_func_arg(self, n, value):
-        sp = self.arch.tc.getConcreteRegisterValue(self.sp)
+        sp = self.tc.getConcreteRegisterValue(self.sp)
         offset = n*self.psize + self.psize
-        self.tc.setConcreteMemoryValue(MemoryAccess(sp + offset,  self.psize), value)
+        self.tc.setConcreteMemoryValue(triton.MemoryAccess(sp + offset,  self.psize), value)
         return value
-
-
 
 class ArchX8664(ArchCommon):
     def __init__(self):
         self.tc = triton.TritonContext()
         self.tc.setArchitecture(triton.ARCH.X86_64)
         self.tc.setMode(triton.MODE.ALIGNED_MEMORY, True)
-        self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, True)
         self.tc.addCallback(constantFolding, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
         self.pc = self.tc.registers.rip
         self.sp = self.tc.registers.rsp
         self.psize = triton.CPUSIZE.QWORD
         self.ret = self.tc.registers.rax
-        # self.context.setAstRepresentationMode(triton.AST_REPRESENTATION.PYTHON)
+        self.tc.setAstRepresentationMode(triton.AST_REPRESENTATION.PYTHON)
 
         self.regs = {
             0: self.tc.registers.rdi,
