@@ -42,22 +42,19 @@ def printf(tp):
     tp.arch.func_ret()
     return True
 
-if len(sys.argv) < 2:
-    print("Binary required")
-    exit(1)
 
 solutions = None
 
 while True:
     si = 0
     try:
-        process = TritonProcessNG(sys.argv[1])
+        process = TritonProcessNG("./samples/baby-re")
         process.solutions = solutions
         process.log(False)
         process.sym_callback = sym_callback
         process.hooks.add("printf", printf)
         process.hooks.add("__isoc99_scanf", scanf)
-        process.run(sys.argv[2:])
+        process.run([])
     except texceptions.NewSolution as e:
         si = 0
         solutions = process.solutions
