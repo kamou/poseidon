@@ -133,7 +133,7 @@ class TritonEnv(object):
                 break
 
     def create_process(self, name="", context=None):
-        process = TritonProcessNG()
+        process = TritonProcess()
         process.instruction_hooks = self.instruction_hooks
         services = dict()
         services["fork"] = self.fork
@@ -278,7 +278,7 @@ def sym_inst_callback(tp, inst):
 solution = None
 valid = False
 while True:
-    process = TritonProcessNG()
+    process = TritonProcess()
     if solution:
         process.solutions = solution
     process.instruction_hooks[triton.OPCODE.X86.INT] = int80_handler

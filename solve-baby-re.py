@@ -3,19 +3,13 @@
 import sys
 from tprocess import *
 import texceptions
+import tanalysis
 
 def sym_callback(tp, inst):
     if (inst.isBranch() or inst.isControlFlow()):
         astCtxt = tp.arch.tc.getAstContext()
         zf = tp.arch.tc.getSymbolicRegister(tp.arch.tc.registers.zf)
-        tp.previousConstraints = astCtxt.land([tp.previousConstraints, zf.getAst() == 1])
-        if zf.getAst().evaluate() == 0:
-            model = tp.arch.tc.getModel(tp.previousConstraints)
-            if model:
-                tp.solutions = model
-                raise texceptions.NewSolution(model)
-            else:
-                raise texceptions.NoPossibleSolution()
+        tp.solve_with_equal(zf, 1)
     return True
 
 def scanf(tp):
@@ -36,31 +30,23 @@ def scanf(tp):
 
     return True
 
-def printf(tp):
-    fmt = tp.arch.get_func_arg(0)
-    _fmt = tp.get_string(fmt)
-    tp.arch.func_ret()
-    return True
-
-
 solutions = None
 
 while True:
     si = 0
     try:
-        process = TritonProcessNG("./samples/baby-re")
+        process = TritonProcess("./samples/baby-re")
+        process.log(True)
         process.solutions = solutions
-        process.log(False)
         process.sym_callback = sym_callback
-        process.hooks.add("printf", printf)
         process.hooks.add("__isoc99_scanf", scanf)
-        process.run([])
+        process.run()
     except texceptions.NewSolution as e:
-        si = 0
-        solutions = process.solutions
+        solutions = e.model
     except texceptions.UnmanagedInstruction:
-        output = "".join([chr(process.solutions[sym].getValue()) for sym in process.solutions])
-        print(output)
         break
+
+output = "".join([chr(process.solutions[sym].getValue()) for sym in process.solutions])
+print(output)
 
 

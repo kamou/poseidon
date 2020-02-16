@@ -1,18 +1,21 @@
 import texceptions
 import codecs
 
+
 class HooksLib(object):
 
     def __init__(self):
         self.heap = 0xff700000
         self.offset = 0
         self.user = dict()
+        self.no_return = set(["abort", "exit", "__stack_chk_fail", "_Unwind_Resume" ])
 
     def add(self, name, cb):
         self.user[name] = cb
 
     def call(self, name, tp):
 
+        print("hook for {}".format(name))
         if name in self.user:
             return self.user[name](tp)
 
@@ -27,6 +30,8 @@ class HooksLib(object):
 
 
     def __exit_hook__(self, tp):
+        # FIXME
+        exit(1)
         return False
 
     def __malloc_hook__(self, tp):
@@ -42,6 +47,7 @@ class HooksLib(object):
 class HooksLinux(HooksLib):
 
     def ____libc_start_main_hook__(self, tp):
+        print("libc start main")
         # call main with expected arguments (argc, argv, [envp])
         main = tp.arch.get_func_arg(0)
         argc = tp.arch.get_func_arg(1)
@@ -51,6 +57,7 @@ class HooksLinux(HooksLib):
         tp.arch.write_reg(tp.pc, main)
         tp.arch.set_func_arg(0, argc)
         tp.arch.set_func_arg(1, argv)
+        print ("endof libcstartmain")
 
         return True
 

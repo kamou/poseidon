@@ -2,6 +2,9 @@
 class ExecutionTerminated(Exception):
     pass
 
+class SyscallTooManyArgs(Exception):
+    pass
+
 class NewSolution(Exception):
     def __init__(self, model):
         self.model = model
@@ -33,7 +36,7 @@ class MissingHook(Exception):
 
     def __str__(self):
         return(
-            "Unknown function {}".format( self.name)
+            "Unknown function {}".format(self.name)
         )
 
 class InvalidMemoryAccess(Exception):
