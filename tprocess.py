@@ -330,6 +330,10 @@ class TritonProcess(object):
             #     self.log_instructions = False
 
             if self.cur_inst and self.cur_inst.getAddress() in self.bp:
+
+                for se in inst.getSymbolicExpressions():
+                    se.setComment(str(inst))
+
                 if not self.bp[self.cur_inst.getAddress()](self):
                     break
             if self.cur_inst and self.log_instructions:
