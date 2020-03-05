@@ -1,0 +1,5 @@
+
+class CallingConvention(object):
+    pass
+
+
