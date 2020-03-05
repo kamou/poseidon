@@ -1,5 +1,10 @@
 import triton
 from texceptions import *
+from tcc import *
+
+class X86Cdecl(CallingConvention):
+    def __init__(self, arch):
+        self.arch = arch
 
 
 class ArchCommon(object):
@@ -99,9 +104,12 @@ class ArchCommon(object):
         self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, en)
 
     def add_simplification(self, symplification):
+        self.tc.removeCallback(self.simplify, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
+        self.tc.addCallback(self.simplify, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
         self.simplifications.add(symplification)
 
     def clear_simplifications(self):
+        self.tc.removeCallback(self.simplify, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
         self.simplifications = set()
 
     def simplify(self, tc, node):
@@ -115,13 +123,7 @@ class ArchX86(ArchCommon):
         self.tc = triton.TritonContext()
         self.tc.setArchitecture(triton.ARCH.X86)
         self.tc.setMode(triton.MODE.ALIGNED_MEMORY, True)
-        # self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, True)
-        # self.tc.setMode(triton.MODE.ONLY_ON_TAINTED, True)
-        self.tc.setMode(triton.MODE.CONSTANT_FOLDING, True)
-        self.tc.setMode(triton.MODE.TAINT_THROUGH_POINTERS, True)
         self.tc.setMode(triton.MODE.SYMBOLIZE_INDEX_ROTATION, True)
-        self.tc.setMode(triton.MODE.AST_OPTIMIZATIONS, True)
-        self.tc.addCallback(self.simplify, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
         self.pc = self.tc.registers.eip
         self.sp = self.tc.registers.esp
         self.psize = triton.CPUSIZE.DWORD
@@ -175,6 +177,7 @@ class ArchX86(ArchCommon):
         return value
 
     def resolve_branch(self, inst):
+        # TODO...
         assert(self.is_branch(inst))
         if dst.getType() == triton.OPERAND.IMM:
             return inst.getOperands()[0].getValue()
@@ -184,49 +187,19 @@ class ArchX86(ArchCommon):
             br = dst.getBaseRegister()
             sr = dst.getSegmentRegister()
 
-            if disp.getType() != triton.OPERAND.IMM:
-                print ("[!] Branch type not supported 1")
-                print (inst)
-                exit(1)
-
-            if scale.getType() != triton.OPERAND.IMM or scale.getValue() != 1:
-                print ("[!] Branch type not supported 2")
-                print (inst)
-                exit(1)
-
-            if br.getType() == triton.OPERAND.REG:
-                if br != self.tp.pc:
-                    print ("[!] Branch type not supported 3")
-                    print (inst)
-                    exit(1)
-
-            if sr.getType() == triton.OPERAND.REG:
-                if sr.getName() != "unknown":
-                    print ("[!] Branch type not supported 4")
-                    print (inst)
-                    exit(1)
-
-
-
-
 class ArchX8664(ArchCommon):
     def __init__(self):
         self.simplifications = set()
         self.tc = triton.TritonContext()
         self.tc.setArchitecture(triton.ARCH.X86_64)
         self.tc.setMode(triton.MODE.ALIGNED_MEMORY, True)
-        # self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, True)
-        # self.tc.setMode(triton.MODE.ONLY_ON_TAINTED, True)
-        # self.tc.setMode(triton.MODE.CONSTANT_FOLDING, True)
         self.tc.addCallback(self.simplify, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
-        # self.tc.setMode(triton.MODE.TAINT_THROUGH_POINTERS, True)
         self.tc.setMode(triton.MODE.SYMBOLIZE_INDEX_ROTATION, True)
-        # self.tc.setMode(triton.MODE.AST_OPTIMIZATIONS, True)
         self.pc = self.tc.registers.rip
         self.sp = self.tc.registers.rsp
         self.psize = triton.CPUSIZE.QWORD
         self.ret = self.tc.registers.rax
-        # self.tc.setAstRepresentationMode(triton.AST_REPRESENTATION.PYTHON)
+        self.tc.setAstRepresentationMode(triton.AST_REPRESENTATION.PYTHON)
 
         self.regs = [
             self.tc.registers.rdi,

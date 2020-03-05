@@ -391,6 +391,7 @@ class TritonProcess(object):
 
     def run(self, arg=[], start=None):
         if start is None:
+            # FIXME: move code to os / calling convention specifique object
             argc = len(arg) + 1
             argv = [self.filename] + arg
 
@@ -414,7 +415,9 @@ class TritonProcess(object):
 
             self.update_area(sp - args_offset *self.arch.psize, "\x00"*self.arch.psize)
         else:
-            # TODO
+            if argv:
+                # TODO: configure function arguments
+                print("WARNING: Ignoring program argument")
             self.arch.write_reg(self.arch.pc, start)
 
         while True:
