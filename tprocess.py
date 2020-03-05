@@ -302,7 +302,6 @@ class TritonProcess(object):
         return False
 
     def _collect_nodes(self, node, avoid=[]):
-        print("collencting..")
         nodes = set()
         todo = set([node])
         avoid = set(avoid.copy())
