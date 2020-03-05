@@ -6,7 +6,6 @@ from texceptions import *
 import thooks
 import binascii
 import texceptions
-import tmemory
 
 class colors:
     BLUE = '\033[94m'
