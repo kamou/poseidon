@@ -1,7 +1,6 @@
 import threading
 import lief
 from tarch import *
-import r2pipe
 import struct
 from texceptions import *
 import thooks
@@ -9,66 +8,94 @@ import binascii
 import texceptions
 import tmemory
 
+class colors:
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    ENDC = '\033[0m'
+
 class TritonProcess(object):
-    last_pid = 0
+
+    LOG_NONE=0
+    LOG_ALL=1
+    LOG_TAINTED=2
+    LOG_SYMBOLIC=3
+
+    def set_option(self, name, value):
+        self.options[name] = valuel
 
     def setup_stack(self, addr):
-        # FIXME: can do better...
+        self.stack_start = addr
+        self.stack_end = addr + 0x10000
         for i in range(0x10000):
-            self.arch.tc.setConcreteMemoryValue(addr-i, 0)
-        self.arch.write_reg(self.arch.sp, addr - 0x8000)
+            self.arch.tc.setConcreteMemoryValue(addr+i, 0)
+        self.arch.write_reg(self.arch.sp, addr + 0x8000)
 
-    def load_binary(self, filename):
-        self.filename = filename
-        if not self.container:
-            self.container = lief.parse(filename)
+    def configure_arch(self):
         if self.container.format == lief.EXE_FORMATS.ELF:
+            self.hooks = thooks.HooksLinux()
             if self.container.header.machine_type == lief.ELF.ARCH.i386:
                 self.arch = ArchX86()
-                self.hooks = thooks.HooksLinux()
+                return
             elif self.container.header.machine_type == lief.ELF.ARCH.x86_64:
                 self.arch = ArchX8664()
-                self.hooks = thooks.HooksLinux()
-            elif self.container.header.machine_type == lief.ELF.ARCH.AARCH64:
-                print ("[!] lief.ARCH.AARCH64 Not supported yet")
-                exit(1)
-            else:
-                print ("[!] {} Not supported yet".format(self.container.format))
-                exit(1)
+                return
+        elif self.container.format == lief.EXE_FORMATS.PE:
+            if self.container.header.machine == lief.PE.MACHINE_TYPES.I386:
+                self.arch = ArchX86()
+                return
+            elif self.container.header.machine == lief.PE.MACHINE_TYPES.AMD64:
+                self.arch = ArchX8664()
+                return
+        raise ValueError("File format or architecture not supperted.")
 
-            self.ast = self.arch.tc.getAstContext()
-            self.memory = tmemory.Memory(self.arch)
-
+    def configure_relocations(self):
+        if self.container.format == lief.EXE_FORMATS.ELF:
             # configure relocations:
             for reloc in self.container.relocations:
-                print( "reloc {} at {:#x}".format(reloc.symbol.name, reloc.address))
                 if reloc.symbol.name:
                     self.relocations[reloc.address] = reloc.symbol.name
                     self.arch.tc.setConcreteMemoryValue(triton.MemoryAccess(reloc.address, self.arch.psize), reloc.address)
         elif self.container.format == lief.EXE_FORMATS.PE:
-
             imports = self.container.imports
             for imp in imports:
                 for entry in imp.entries:
                     self.relocations[entry.iat_value] = entry.name
 
-            if self.container.header.machine == lief.PE.MACHINE_TYPES.I386:
-                self.arch = ArchX86()
-            elif self.container.header.machine == lief.PE.MACHINE_TYPES.AMD64:
-                self.arch = ArchX8664()
-            else:
-                print ("[!] {} Not supported yet".format(self.container.header.machine_type))
-                exit(1)
-        else:
-            print ("[!] Unknown format")
-            exit(1)
+    def add_bp(self, addr, cb):
+        self.bp[addr] = cb
+
+    def add_instruction_hook(self, itype, cb):
+        self.instruction_hooks[itype] = cb
+
+    def log(self, lvl):
+        self.instruction_log_level = lvl
+
+    def set_entrypoint(self, ep):
+        self.entrypoint = ep
+        self.arch.write_reg(self.arch.pc, self.entrypoint)
+
+    def register_os_services(self, services):
+        self.os_services = services
+
+    def __init__(self, filename=None):
+        self.hooks = None
+
+        self.filename = filename
+        self.container = lief.parse(filename)
+        self.configure_arch()
+        self.ast = self.arch.tc.getAstContext()
+
+        self.relocations = dict()
+        self.configure_relocations()
+
         self.pc = self.arch.pc
         self.sp = self.arch.sp
         self.ret = self.arch.ret
-        self.previousConstraints = self.ast.equal(self.ast.bvtrue(), self.ast.bvtrue())
 
         self.set_entrypoint(self.container.entrypoint)
-        self.arch.set_memory_feed(g=self.container_cache, s=self.update_cache)
+        self.arch.set_memory_feed(self.memory_feed)
 
         # configure stack:
         self.setup_stack(0x57AC0000)
@@ -82,52 +109,23 @@ class TritonProcess(object):
                     self.arch.tc.setConcreteMemoryValue(var+i, 0)
                 break
 
-    def add_bp(self, addr, cb):
-        self.bp[addr] = cb
 
-    def add_instruction_hook(self, itype, cb):
-        self.instruction_hooks[itype] = cb
-
-    def log(self, enable):
-        self.log_instructions = enable
-
-    def set_entrypoint(self, ep):
-        self.entrypoint = ep
-        self.arch.write_reg(self.arch.pc, self.entrypoint)
-
-    def register_os_services(self, services):
-        self.os_services = services
-
-    def __init__(self, filename=None, container=None):
         self.bp = dict()
         self.cur_inst = None
-        self.filename = filename
-        self.pending_action = threading.Semaphore(0)
-        self.pending = list()
         self.cur_inst = None
-        self.cont = threading.Semaphore(0)
-        self.debugee = None
-        self.dirty = dict()
-        self.relocations = dict()
-        self.pid = TritonProcess.last_pid
         self.instruction_hooks = dict()
-        TritonProcess.last_pid+=1
-
-        self.hooks = None
-
         self.sym_callback = None
-        self.initial_reg_state = dict()
-        self.initial_mem_state = dict()
-
+        self.insts = dict()
+        self.lasts = dict()
         self.invalid_memory_handler = None
-
-        self.container = container
-        if self.filename:
-            self.load_binary(self.filename)
         self.sym_mem = dict()
         self.epi = None
         self.log_hook = False
-        self.log_instructions = False
+        self.instruction_log_level = TritonProcess.LOG_NONE
+        self.on_disass = None
+        self.log_opts = dict()
+        self.log_opts["avoid_output_registers"] = ["rsp"]
+        self.log_opts["avoid_input_registers"] = ["rsp", "rip"]
 
     def on_each_processed_inst(self, each):
         self.epi = each
@@ -141,92 +139,26 @@ class TritonProcess(object):
     def add_hook(self, name, cb):
         self.hooks.add(name, cb)
 
-    def update_cache(self, tc, mem, value):
-        for i in range(mem.getSize()):
-            self.dirty[mem.getAddress()+i] = True
-
-    def container_cache(self, tc, mem):
+    def memory_feed(self, tc, mem):
         addr = mem.getAddress()
         size = mem.getSize()
         for index in range(size):
             if not tc.isMemoryMapped(addr+index):
-                try:
-                    data = self.container.get_content_from_virtual_address(addr+index, 1)
+                try: data = self.container.get_content_from_virtual_address(addr+index, 1)
                 except:
                     if self.invalid_memory_handler:
-                        self.invalid_memory_handler(self)
-                    else:
-                        if self.cur_inst:
-                            operands = self.cur_inst.getOperands()
-                            if len(operands) == 2 and operands[1].getType() == 2:
-                                segment = operands[1].getSegmentRegister().getName()
-                                disp = operands[1].getDisplacement()
-                                # FIXME move arch dependant code
-                                if segment == "fs" and disp.getValue() == 0x28 and 0x28 == addr:
-                                    data = [0]
-                                else:
-                                #     r2 = r2pipe.open(self.filename, ["-d"])
-                                #     data = [r2.cmdj("pv1j @ {:#x}".format(addr+index))[0]["value"]]
-                                #     r2.quit()
-                                    raise InvalidMemoryAccess(self.cur_inst, addr, size) from None
-
-                            else:
-                                # r2 = r2pipe.open(self.filename, ["-d"])
-                                # data = [r2.cmdj("pv1j @ {:#x}".format(addr+index))[0]["value"]]
-                                # r2.quit()
-                                raise InvalidMemoryAccess(self.cur_inst, addr, size) from None
-                        else:
-                            # r2 = r2pipe.open(self.filename, ["-d"])
-                            # data = [r2.cmdj("pv1j @ {:#x}".format(addr+index))[0]["value"]]
-                            # r2.quit()
+                        if not self.invalid_memory_handler(self, addr+index):
                             raise InvalidMemoryAccess(self.cur_inst, addr, size) from None
-
+                        return
+                    else:
+                        raise InvalidMemoryAccess(self.cur_inst, addr, size) from None
                 tc.setConcreteMemoryValue(addr+index, data[0])
-                self.dirty[addr+index] = True
-
-        return
-
-    def mem_cache(self, tc, mem):
-        addr = mem.getAddress()
-        size = mem.getSize()
-        for index in range(size):
-            if not tc.isMemoryMapped(addr+index):
-                data = self.container.get_content_from_virtual_address(addr+index, 1)
-                tc.setConcreteMemoryValue(addr+index, data[0])
-
         return
 
     def symbolize(self, addr, size):
         if addr not in self.sym_mem:
             self.sym_mem[addr] = self.arch.symbolize(addr, size)
         return self.sym_mem[addr]
-
-    def make_printable(self, sym):
-        self.previousConstraints = self.ast.land([self.previousConstraints, self.ast.bvugt(self.ast.variable(sym), self.ast.bv(0x20, triton.CPUSIZE.BYTE_BIT))])
-        self.previousConstraints = self.ast.land([self.previousConstraints, self.ast.bvult(self.ast.variable(sym), self.ast.bv(0x7f, triton.CPUSIZE.BYTE_BIT))])
-
-    def add_constraint(self, c):
-        self.previousConstraints = self.ast.land([self.previousConstraints, c])
-
-    def solve(self):
-        model = self.arch.tc.getModel(self.previousConstraints)
-        if model:
-            self.solutions = model
-            raise texceptions.NewSolution(model)
-        else:
-            raise texceptions.NoPossibleSolution()
-
-    def solve_with_equal(self, var, val):
-        self.previousConstraints = self.ast.land([self.previousConstraints, var.getAst() == val])
-        if var.getAst().evaluate() != val:
-            print ( "requesting model")
-            model = self.arch.tc.getModel(self.previousConstraints)
-            print ( "done.")
-            if model:
-                self.solutions = model
-                raise texceptions.NewSolution(model)
-            else:
-                raise texceptions.NoPossibleSolution()
 
     def update_area(self, address, data):
         self.arch.tc.setConcreteMemoryAreaValue(address, bytes(data, "utf8"))
@@ -236,13 +168,9 @@ class TritonProcess(object):
 
     def get_string(self, addr):
         s = str()
-        index = 0
-        while self.arch.tc.getConcreteMemoryValue(addr+index):
-            c = chr(self.arch.tc.getConcreteMemoryValue(addr+index))
-            # if c not in string.printable: c = ""
-            s += c
-            index  += 1
-
+        while self.arch.tc.getConcreteMemoryValue(addr):
+            s += chr(self.arch.tc.getConcreteMemoryValue(addr))
+            addr  += 1
         return s
 
     def skip_inst(self):
@@ -267,37 +195,203 @@ class TritonProcess(object):
             addr = self.arch.read_reg(self.pc)
 
         if addr in self.relocations:
-            print ("addr: {:#x}".format(addr))
             self.cur_inst = None
             if self.hooks.call(self.relocations[addr], self):
                 return self.disassemble(addr)
             return None
 
-        inst = self.disassemble(addr)
+        self.cur_inst = self.disassemble(addr)
 
-        if not inst:
+        if not self.cur_inst:
             return None
 
-        if inst.getType() in self.instruction_hooks:
-            if not self.instruction_hooks[inst.getType()](self):
+        if self.cur_inst.getType() in self.instruction_hooks:
+            if not self.instruction_hooks[self.cur_inst.getType()](self):
                 return None
         else:
-            rdi = self.arch.read_reg(self.arch.tc.registers.rdi)
-            if inst.getAddress() == 0x401175:
-                print ("rdi({:#x}) = {:#x}".format(rdi, self.arch.get_memory_value(rdi, self.arch.psize)))
-            inst = self.arch.process()
+            self.cur_inst = self.arch.process()
 
-            if inst.isSymbolized():
+            if self.cur_inst and self.instruction_log_level > TritonProcess.LOG_NONE:
+                self.do_log()
+
+            if self.cur_inst.isSymbolized():
                 if self.sym_callback:
                     # stop execution if callback returns False
-                    if not self.sym_callback(self, inst):
+                    if not self.sym_callback(self, self.cur_inst):
                         return None
+            self.collect_mem_access()
             if self.epi:
-                self.epi(self, inst)
-        return inst
+                self.epi(self, self.cur_inst)
+        return self.cur_inst
+
+    def do_log(self):
+        log_en = self.instruction_log_level == TritonProcess.LOG_ALL
+        log_en |= (self.instruction_log_level == TritonProcess.LOG_TAINTED) and self.cur_inst.isTainted()
+        log_en |= (self.instruction_log_level == TritonProcess.LOG_SYMBOLIC) and self.cur_inst.isSymbolized()
+        avoid_or = self.log_opts["avoid_output_registers"]
+        avoid_ir = self.log_opts["avoid_input_registers"]
+
+        if log_en:
+            rr = self.cur_inst.getReadRegisters()
+            wr = self.cur_inst.getWrittenRegisters()
+
+            rregs = list()
+
+            flags = ""
+            for r, v in rr:
+                if r.getName() in avoid_ir: continue
+                value = v.evaluate()
+                if self.arch.tc.isFlag(r):
+                    if v.evaluate():
+                        flags += r.getName()[0]
+                else:
+                    color = ""
+                    if self.is_executable(value):
+                        color = colors.RED
+                    elif self.stack_start <= value < self.stack_end:
+                        color = colors.GREEN
+                    rregs.append("{:3}: {}{:016x}{}".format(r.getName(), color, v.evaluate(), colors.ENDC))
+
+            if flags:
+                rregs.append("flags: {}".format(flags))
+
+
+            wregs = list()
+            flags = ""
+            for r, v in wr:
+                if r.getName() in avoid_or: continue
+                value = v.evaluate()
+                if self.arch.tc.isFlag(r):
+                    if value:
+                        flags += r.getName()[0]
+                else:
+                    color = ""
+                    if self.is_executable(value):
+                        color = colors.RED
+                    elif self.stack_start <= value < self.stack_end:
+                        color = colors.GREEN
+
+                    wregs.append("{:3}: {}{:016x}{}".format(r.getName(), color, v.evaluate(), colors.ENDC))
+
+            if flags:
+                wregs.append("flags: {}".format(flags))
+
+            comment = " # in : {}".format(", ".join(rregs))
+
+            inst_str = str(self.cur_inst)
+            l = len(inst_str)
+            comment = "\n".join([comment, "{}# out: {}".format(" "*60, ", ".join(wregs))])
+            addr, inst_str = inst_str.split(":", 1)
+            inst_str = inst_str.strip()
+            inst_str = "{}{}{}: {}".format(colors.YELLOW, addr.strip(), colors.ENDC, inst_str)
+
+            if self.cur_inst.isSymbolized(): inst_str = "* {}".format(inst_str)
+            elif self.cur_inst.isTainted(): inst_str = "+ {}".format(inst_str)
+            else: inst_str = "  {}".format(inst_str)
+
+            inst_str = "{}{}{}".format(inst_str, " "*(60 - l - 3), comment)
+
+            print (inst_str)
+
+    def is_executable(self, addr):
+        if self.container.format == lief.EXE_FORMATS.ELF:
+            for s in self.container.segments:
+                if s.has(lief.ELF.SEGMENT_FLAGS.X):
+                    if s.virtual_address <= addr < s.virtual_address + s.virtual_size:
+                        return True
+        return False
+
+    def _collect_nodes(self, node, avoid=[]):
+        print("collencting..")
+        nodes = set()
+        todo = set([node])
+        avoid = set(avoid.copy())
+        while len(todo):
+            node = todo.pop()
+
+            if not node: continue
+            if node in avoid: continue
+
+            if node.getType() == triton.AST_NODE.REFERENCE:
+                nodes.add(node)
+                avoid.add(node)
+
+                symexpr = node.getSymbolicExpression()
+                origin = symexpr.getOrigin()
+
+                if origin and origin.getType() == triton.OPERAND.MEM:
+                    lea = origin.getLeaAst()
+                    if lea:
+                        todo.add(lea)
+
+                slicing =  self.arch.tc.sliceExpressions(symexpr)
+                todo.add(symexpr.getAst())
+
+                for s in slicing:
+                    todo.add(slicing[s].getAst())
+
+            todo.update(set(node.getChildren()))
+        del todo
+        return nodes
+
+    def collect_nodes(self, node, avoid=None):
+        nodes = set()
+        todo = set([node])
+        if avoid == None: avoid = set()
+        while len(todo):
+            node = todo.pop()
+            if not node: continue
+            if node in avoid: continue
+            avoid.add(node)
+            if node.getHash() in self.lasts:
+                lea_ast = self.lasts[node.getHash()]
+                todo.update(lea_ast)
+
+            if node.getHash() in self.lasts:
+                lea_ast = self.lasts[node.getHash()]
+                todo.update(lea_ast)
+
+            if node.getType() == triton.AST_NODE.REFERENCE:
+                nodes.add(node)
+                symexpr = node.getSymbolicExpression()
+                origin = symexpr.getOrigin()
+
+                todo.add(symexpr.getAst())
+
+            todo.update(set(node.getChildren()))
+        del todo
+        return nodes
+
+    def collect_mem_access(self):
+        if self.cur_inst.isTainted():
+            inst_str = str(self.cur_inst)
+            addr, inst_str = inst_str.split(":", 1)
+            addr = int(addr.strip(), 16)
+            inst_str = inst_str.strip()
+
+            rr = self.cur_inst.getReadRegisters()
+            wr = self.cur_inst.getWrittenRegisters()
+
+            if self.cur_inst.isMemoryRead():
+                la = self.cur_inst.getLoadAccess()
+                for a, v in la:
+                    ast = a.getLeaAst()
+                    if ast:
+                        if not v.getHash() in self.lasts:
+                            self.lasts[v.getHash()] = set()
+                        self.lasts[v.getHash()].add(ast)
+
+            if self.cur_inst.isMemoryWrite():
+                la = self.cur_inst.getStoreAccess()
+                for a, v in la:
+                    ast = a.getLeaAst()
+                    if ast:
+                        if not v.getHash() in self.lasts:
+                            self.lasts[v.getHash()] = set()
+                        self.lasts[v.getHash()].add(ast)
 
     def run(self, arg=[], start=None):
-        if not start is None:
+        if start is None:
             argc = len(arg) + 1
             argv = [self.filename] + arg
 
@@ -320,23 +414,21 @@ class TritonProcess(object):
                 args_offset += 1
 
             self.update_area(sp - args_offset *self.arch.psize, "\x00"*self.arch.psize)
+        else:
+            # TODO
+            self.arch.write_reg(self.arch.pc, start)
 
         while True:
             self.cur_inst = self.disassemble()
-            # if self.cur_inst and self.cur_inst.getAddress() == 0x172c:
-            #     self.log_instructions = True
-            # if self.cur_inst and self.cur_inst.getAddress() == 0x0000172e:
-            #     print()
-            #     self.log_instructions = False
+            if self.on_disass:
+                self.on_disass(self, self.cur_inst)
 
             if self.cur_inst and self.cur_inst.getAddress() in self.bp:
-
-                for se in inst.getSymbolicExpressions():
-                    se.setComment(str(inst))
-
                 if not self.bp[self.cur_inst.getAddress()](self):
                     break
-            if self.cur_inst and self.log_instructions:
-                print (self.cur_inst)
 
             self.process()
+
+            if self.cur_inst:
+                for se in self.cur_inst.getSymbolicExpressions():
+                    se.setComment(str(self.cur_inst))

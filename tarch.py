@@ -2,11 +2,6 @@ import triton
 from texceptions import *
 
 
-def constantFolding(Triton, node):
-    if node.isSymbolized():
-        return node
-    return Triton.getAstContext().bv(node.evaluate(), node.getBitvectorSize())
-
 class ArchCommon(object):
     def symbolize(self, addr, size):
         return self.tc.symbolizeMemory(triton.MemoryAccess(addr, size))
@@ -17,10 +12,8 @@ class ArchCommon(object):
     def write_reg(self, reg, value):
         return self.tc.setConcreteRegisterValue(reg, value)
 
-    def set_memory_feed(self, g, s=None):
-        self.tc.addCallback(g, triton.CALLBACK.GET_CONCRETE_MEMORY_VALUE)
-        if s:
-            self.tc.addCallback(s, triton.CALLBACK.SET_CONCRETE_MEMORY_VALUE)
+    def set_memory_feed(self, cb):
+        self.tc.addCallback(cb, triton.CALLBACK.GET_CONCRETE_MEMORY_VALUE)
 
     def func_ret(self, value=None):
         if value is not None:
@@ -96,13 +89,39 @@ class ArchCommon(object):
             return True
         return False
 
+    def only_on_tainted(self, en):
+        self.tc.setMode(triton.MODE.ONLY_ON_TAINTED, en)
+
+    def taint_through_pointers(self, en):
+        self.tc.setMode(triton.MODE.TAINT_THROUGH_POINTERS, en)
+
+    def only_on_symbolized(self, en):
+        self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, en)
+
+    def add_simplification(self, symplification):
+        self.simplifications.add(symplification)
+
+    def clear_simplifications(self):
+        self.simplifications = set()
+
+    def simplify(self, tc, node):
+        for simplification in self.simplifications:
+            node = simplification(self, tc, node)
+        return node
+
 class ArchX86(ArchCommon):
     def __init__(self):
+        self.simplifications = set()
         self.tc = triton.TritonContext()
         self.tc.setArchitecture(triton.ARCH.X86)
         self.tc.setMode(triton.MODE.ALIGNED_MEMORY, True)
-        self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, True)
-        self.tc.addCallback(constantFolding, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
+        # self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, True)
+        # self.tc.setMode(triton.MODE.ONLY_ON_TAINTED, True)
+        self.tc.setMode(triton.MODE.CONSTANT_FOLDING, True)
+        self.tc.setMode(triton.MODE.TAINT_THROUGH_POINTERS, True)
+        self.tc.setMode(triton.MODE.SYMBOLIZE_INDEX_ROTATION, True)
+        self.tc.setMode(triton.MODE.AST_OPTIMIZATIONS, True)
+        self.tc.addCallback(self.simplify, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
         self.pc = self.tc.registers.eip
         self.sp = self.tc.registers.esp
         self.psize = triton.CPUSIZE.DWORD
@@ -187,18 +206,27 @@ class ArchX86(ArchCommon):
                     print (inst)
                     exit(1)
 
+
+
+
 class ArchX8664(ArchCommon):
     def __init__(self):
+        self.simplifications = set()
         self.tc = triton.TritonContext()
         self.tc.setArchitecture(triton.ARCH.X86_64)
         self.tc.setMode(triton.MODE.ALIGNED_MEMORY, True)
-        self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, True)
-        self.tc.addCallback(constantFolding, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
+        # self.tc.setMode(triton.MODE.ONLY_ON_SYMBOLIZED, True)
+        # self.tc.setMode(triton.MODE.ONLY_ON_TAINTED, True)
+        # self.tc.setMode(triton.MODE.CONSTANT_FOLDING, True)
+        self.tc.addCallback(self.simplify, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
+        # self.tc.setMode(triton.MODE.TAINT_THROUGH_POINTERS, True)
+        self.tc.setMode(triton.MODE.SYMBOLIZE_INDEX_ROTATION, True)
+        # self.tc.setMode(triton.MODE.AST_OPTIMIZATIONS, True)
         self.pc = self.tc.registers.rip
         self.sp = self.tc.registers.rsp
         self.psize = triton.CPUSIZE.QWORD
         self.ret = self.tc.registers.rax
-        self.tc.setAstRepresentationMode(triton.AST_REPRESENTATION.PYTHON)
+        # self.tc.setAstRepresentationMode(triton.AST_REPRESENTATION.PYTHON)
 
         self.regs = [
             self.tc.registers.rdi,
