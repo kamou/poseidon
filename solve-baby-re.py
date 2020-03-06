@@ -59,7 +59,7 @@ while True:
         process = TritonProcess("./samples/baby-re")
         constraints = process.ast.equal(process.ast.bvtrue(), process.ast.bvtrue())
         process.invalid_memory_handler = memory_exception
-        process.log(TritonProcess.LOG_ALL)
+        process.log(TritonProcess.LOG_SYMBOLIC)
         # process.arch.only_on_tainted(True)
         process.solutions = solutions
         process.sym_callback = sym_callback

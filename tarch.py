@@ -1,13 +1,30 @@
 import triton
 from texceptions import *
 from tcc import *
+import keystone
 
 class X86Cdecl(CallingConvention):
     def __init__(self, arch):
         self.arch = arch
 
+    def get_func_arg(self, n):
+        offset = n*self.arch.psize + self.arch.psize
+        value = self.arch.tc.getConcreteMemoryValue(triton.MemoryAccess(self.arch.tc.getConcreteRegisterValue(self.sp)+offset, self.psize))
+        return value
+
+    def set_func_arg(self, n, value):
+        sp = self.arch.tc.getConcreteRegisterValue(self.arch.sp)
+        offset = n*self.arch.psize + self.arch.psize
+        self.arch.tc.setConcreteMemoryValue(triton.MemoryAccess(sp + offset,  self.arch.psize), value)
+        return value
+
 
 class ArchCommon(object):
+    MODE_FD = 0 # full decending
+    MODE_FA = 1 # full ascending
+    MODE_ED = 2 # empty decending
+    MODE_EA = 3 # empty ascending
+
     def symbolize(self, addr, size):
         return self.tc.symbolizeMemory(triton.MemoryAccess(addr, size))
 
@@ -117,6 +134,59 @@ class ArchCommon(object):
             node = simplification(self, tc, node)
         return node
 
+    def assemble(self, code):
+        return self.ks.asm(code)
+
+    def push(self, value, size=None, stack_mode=MODE_FD):
+        if size == None:
+            size = self.psize
+
+        if mode == MODE_FD:
+            sp = self.tc.getConcreteRegisterValue(self.sp) - size
+            self.write_reg(self.sp, sp)
+            self.set_memory_value(sp, value, size)
+
+        elif mode == MODE_ED:
+            sp = self.tc.getConcreteRegisterValue(self.sp)
+            self.set_memory_value(sp, value, size)
+            self.write_reg(self.sp, sp - size)
+
+        elif mode == MODE_FA:
+            sp = self.tc.getConcreteRegisterValue(self.sp) + size
+            self.write_reg(self.sp, sp)
+            self.set_memory_value(sp, value, size)
+
+        elif mode == MODE_EA:
+            sp = self.tc.getConcreteRegisterValue(self.sp)
+            self.set_memory_value(sp, value, size)
+            self.write_reg(self.sp, sp + size)
+
+    def pop(self, size=None, mode=MODE_FD):
+        if size == None:
+            size = self.psize
+
+        if mode == MODE_FD:
+            sp = self.tc.getConcreteRegisterValue(self.sp)
+            value = self.get_memory_value(sp, size)
+            self.write_reg(self.sp, sp + size)
+
+        elif mode == MODE_ED:
+            sp = self.tc.getConcreteRegisterValue(self.sp) + size
+            self.write_reg(self.sp, sp)
+            value = self.get_memory_value(sp, size)
+
+        elif mode == MODE_FA:
+            sp = self.tc.getConcreteRegisterValue(self.sp)
+            value = self.get_memory_value(sp, size)
+            self.write_reg(self.sp, sp-size)
+
+        elif mode == MODE_EA:
+            sp = self.tc.getConcreteRegisterValue(self.sp) - size
+            self.write_reg(self.sp, sp)
+            value = self.get_memory_value(sp, size)
+        return value
+
+
 class ArchX86(ArchCommon):
     def __init__(self):
         self.simplifications = set()
@@ -124,6 +194,7 @@ class ArchX86(ArchCommon):
         self.tc.setArchitecture(triton.ARCH.X86)
         self.tc.setMode(triton.MODE.ALIGNED_MEMORY, True)
         self.tc.setMode(triton.MODE.SYMBOLIZE_INDEX_ROTATION, True)
+        self.ks = keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_32)
         self.pc = self.tc.registers.eip
         self.sp = self.tc.registers.esp
         self.psize = triton.CPUSIZE.DWORD
@@ -187,12 +258,19 @@ class ArchX86(ArchCommon):
             br = dst.getBaseRegister()
             sr = dst.getSegmentRegister()
 
+    def push(self, value, size=None):
+        super.push(value, size, MODE_FD)
+
+    def pop(self, value, size=None):
+        return super.pop(value, size, MODE_FD)
+
 class ArchX8664(ArchCommon):
     def __init__(self):
         self.simplifications = set()
         self.tc = triton.TritonContext()
         self.tc.setArchitecture(triton.ARCH.X86_64)
         self.tc.setMode(triton.MODE.ALIGNED_MEMORY, True)
+        self.ks = keystone.Ks(keystone.KS_ARCH_X86, keystone.KS_MODE_64)
         self.tc.addCallback(self.simplify, triton.CALLBACK.SYMBOLIC_SIMPLIFICATION)
         self.tc.setMode(triton.MODE.SYMBOLIZE_INDEX_ROTATION, True)
         self.pc = self.tc.registers.rip
@@ -263,3 +341,8 @@ class ArchX8664(ArchCommon):
             self.tc.setConcreteMemoryValue(MemoryAccess(offset,  self.psize), value)
         return value
 
+    def push(self, value, size=None):
+        super.push(value, size, MODE_FD)
+
+    def pop(self, value, size=None):
+        return super.pop(value, size, MODE_FD)

@@ -15,7 +15,6 @@ class HooksLib(object):
 
     def call(self, name, tp):
 
-        print("hook for {}".format(name))
         if name in self.user:
             return self.user[name](tp)
 
@@ -28,10 +27,7 @@ class HooksLib(object):
 
         raise texceptions.MissingHook(name)
 
-
     def __exit_hook__(self, tp):
-        # FIXME
-        exit(1)
         return False
 
     def __malloc_hook__(self, tp):
@@ -40,9 +36,6 @@ class HooksLib(object):
         self.offset += size
         tp.arch.func_ret(address)
         return True
-
-
-
 
 class HooksLinux(HooksLib):
 

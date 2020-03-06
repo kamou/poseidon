@@ -24,12 +24,12 @@ class TritonProcess(object):
     def set_option(self, name, value):
         self.options[name] = valuel
 
-    def setup_stack(self, addr):
+    def setup_stack(self, addr, size):
         self.stack_start = addr
-        self.stack_end = addr + 0x10000
-        for i in range(0x10000):
+        self.stack_size = size
+        for i in range(size):
             self.arch.tc.setConcreteMemoryValue(addr+i, 0)
-        self.arch.write_reg(self.arch.sp, addr + 0x8000)
+        self.arch.write_reg(self.arch.sp, int(addr + size/2))
 
     def configure_arch(self):
         if self.container.format == lief.EXE_FORMATS.ELF:
@@ -97,7 +97,7 @@ class TritonProcess(object):
         self.arch.set_memory_feed(self.memory_feed)
 
         # configure stack:
-        self.setup_stack(0x57AC0000)
+        self.setup_stack(0x57AC0000, 0x10000)
 
         # load .bss
         for s in self.container.sections:
@@ -149,8 +149,7 @@ class TritonProcess(object):
                         if not self.invalid_memory_handler(self, addr+index):
                             raise InvalidMemoryAccess(self.cur_inst, addr, size) from None
                         return
-                    else:
-                        raise InvalidMemoryAccess(self.cur_inst, addr, size) from None
+                    raise InvalidMemoryAccess(self.cur_inst, addr, size) from None
                 tc.setConcreteMemoryValue(addr+index, data[0])
         return
 
@@ -160,7 +159,7 @@ class TritonProcess(object):
         return self.sym_mem[addr]
 
     def update_area(self, address, data):
-        self.arch.tc.setConcreteMemoryAreaValue(address, bytes(data, "utf8"))
+        self.arch.tc.setConcreteMemoryAreaValue(address, bytes(data, "utf-8"))
 
     def get_area(self, address, size):
         return self.arch.get_area(address, size)
@@ -247,7 +246,7 @@ class TritonProcess(object):
                     color = ""
                     if self.is_executable(value):
                         color = colors.RED
-                    elif self.stack_start <= value < self.stack_end:
+                    elif self.stack_start <= value < self.stack_start + self.stack_size:
                         color = colors.GREEN
                     rregs.append("{:3}: {}{:016x}{}".format(r.getName(), color, v.evaluate(), colors.ENDC))
 
@@ -267,7 +266,7 @@ class TritonProcess(object):
                     color = ""
                     if self.is_executable(value):
                         color = colors.RED
-                    elif self.stack_start <= value < self.stack_end:
+                    elif self.stack_start <= value < self.stack_start + self.stack_size:
                         color = colors.GREEN
 
                     wregs.append("{:3}: {}{:016x}{}".format(r.getName(), color, v.evaluate(), colors.ENDC))
@@ -400,7 +399,7 @@ class TritonProcess(object):
             argc_data = struct.pack("<Q", argc)
             self.arch.set_memory_value(sp, argc, self.arch.psize)
             argc = self.arch.get_memory_value(sp, self.arch.psize)
-            self.arch.set_func_arg(3, argv_address)
+            self.arch.set_func_arg(argc, argv_address)
 
             # write argv
             update_offset = 0
@@ -414,7 +413,7 @@ class TritonProcess(object):
 
             self.update_area(sp - args_offset *self.arch.psize, "\x00"*self.arch.psize)
         else:
-            if argv:
+            if arg:
                 # TODO: configure function arguments
                 print("WARNING: Ignoring program argument")
             self.arch.write_reg(self.arch.pc, start)
